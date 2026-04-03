@@ -1,6 +1,6 @@
 'use client'
 
-import { Button, toast } from '@payloadcms/ui'
+import { Button, toast, useConfig } from '@payloadcms/ui'
 import React, { useCallback, useState } from 'react'
 
 type ErrorResponse = {
@@ -14,10 +14,13 @@ type PurgeResult = {
 }
 
 type Props = {
-  collectionSlug?: string
+  collectionSlug: string
 }
 
-export const PurgeButton: React.FC<Props> = ({ collectionSlug = 'media' }) => {
+export const PurgeButton: React.FC<Props> = ({ collectionSlug }) => {
+  const { config } = useConfig()
+  const apiRoute = config.routes?.api ?? '/api'
+
   const [isLoading, setIsLoading] = useState(false)
 
   const runPurge = useCallback(async () => {
@@ -32,7 +35,7 @@ export const PurgeButton: React.FC<Props> = ({ collectionSlug = 'media' }) => {
     setIsLoading(true)
 
     try {
-      const res = await fetch(`/api/${collectionSlug}/purge`, { method: 'POST' })
+      const res = await fetch(`${apiRoute}/${collectionSlug}/purge`, { method: 'POST' })
       const data = (await res.json()) as ErrorResponse | PurgeResult
 
       if (!res.ok) {
@@ -46,7 +49,11 @@ export const PurgeButton: React.FC<Props> = ({ collectionSlug = 'media' }) => {
     } finally {
       setIsLoading(false)
     }
-  }, [collectionSlug])
+  }, [collectionSlug, apiRoute])
+
+  if (!collectionSlug) {
+    return null
+  }
 
   return (
     <Button buttonStyle="secondary" disabled={isLoading} onClick={runPurge}>

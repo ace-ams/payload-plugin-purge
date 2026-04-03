@@ -1,8 +1,47 @@
 import type { PayloadRequest } from 'payload'
 
+import type { PayloadPurgeConfig } from '../index.js'
+
+const RATE_LIMIT_MS = 30_000
+const lastPurgeTime = new Map<string, number>()
+
+/**
+ * Async generator that yields every document in a collection using batched
+ * pagination so that very large collections never have to be loaded into
+ * memory all at once.
+ */
+async function* pageDocs(
+  payload: PayloadRequest['payload'],
+  collection: string,
+  pageSize = 100,
+): AsyncGenerator<{ id: number | string }> {
+  let page = 1
+
+  while (true) {
+    const result = await payload.find({
+      collection: collection as never,
+      depth: 0,
+      limit: pageSize,
+      overrideAccess: true,
+      page,
+    })
+
+    for (const doc of result.docs) {
+      yield doc as { id: number | string }
+    }
+
+    if (!result.hasNextPage) {
+      break
+    }
+
+    page++
+  }
+}
+
 export default async function purgeHandler(
   req: PayloadRequest,
   collectionSlug: string,
+  pluginOptions: PayloadPurgeConfig,
 ): Promise<Response> {
   const { payload } = req
 
@@ -11,16 +50,44 @@ export default async function purgeHandler(
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  try {
-    // 2. Fetch all documents in the target collection
-    const targetDocs = await payload.find({
-      collection: collectionSlug as never,
-      depth: 0,
-      limit: 0,
-      pagination: false,
-    })
+  // 2. In-memory rate limiting (per authenticated user)
+  const userId = String(req.user.id)
+  const now = Date.now()
+  const last = lastPurgeTime.get(userId)
 
-    const allIds: (number | string)[] = targetDocs.docs.map((doc) => doc.id)
+  if (last !== undefined && now - last < RATE_LIMIT_MS) {
+    const secondsRemaining = Math.ceil((RATE_LIMIT_MS - (now - last)) / 1000)
+    return Response.json(
+      {
+        error: `Rate limit exceeded. Please wait ${secondsRemaining} second(s) before purging again.`,
+      },
+      { status: 429 },
+    )
+  }
+
+  // 3. Custom access check
+  if (pluginOptions.access) {
+    const allowed = await pluginOptions.access(req)
+    if (!allowed) {
+      return Response.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
+
+  // Record timestamp now that all pre-flight checks have passed
+  lastPurgeTime.set(userId, Date.now())
+
+  // 4. beforePurge hook
+  if (pluginOptions.beforePurge) {
+    await pluginOptions.beforePurge({ collectionSlug, req })
+  }
+
+  try {
+    // 5. Fetch all document IDs in the target collection (batched)
+    const allIds: (number | string)[] = []
+
+    for await (const doc of pageDocs(payload, collectionSlug)) {
+      allIds.push(doc.id)
+    }
 
     if (allIds.length === 0) {
       return Response.json({
@@ -32,29 +99,29 @@ export default async function purgeHandler(
 
     const usedIds = new Set<number | string>()
 
-    // 3. Scan every other collection for references to these IDs
+    // 6. Scan every other collection for references to these IDs (batched per page)
     for (const collection of payload.config.collections) {
       if (collection.slug === collectionSlug) {
         continue
       }
 
-      const items = await payload.find({
-        collection: collection.slug as never,
-        depth: 0,
-        limit: 0,
-        pagination: false,
-      })
+      // Early-exit: all IDs are already known to be in use
+      if (usedIds.size === allIds.length) {
+        break
+      }
 
-      const serialised = JSON.stringify(items.docs)
+      for await (const doc of pageDocs(payload, collection.slug)) {
+        const serialised = JSON.stringify([doc])
 
-      for (const id of allIds) {
-        if (serialised.includes(`"${id}"`)) {
-          usedIds.add(id)
+        for (const id of allIds) {
+          if (serialised.includes(`"${id}"`)) {
+            usedIds.add(id)
+          }
         }
       }
     }
 
-    // 4. Scan every global for references (globals may not be defined)
+    // 7. Scan every global for references (globals are not typically large)
     const globals = payload.config.globals ?? []
 
     for (const global of globals) {
@@ -83,11 +150,23 @@ export default async function purgeHandler(
 
     const unusedIds = allIds.filter((id) => !usedIds.has(id))
 
-    // 5. Delete unused documents
+    // 8. Delete unused documents (respects collection access control)
     for (const id of unusedIds) {
       await payload.delete({
         id: id as string,
         collection: collectionSlug as never,
+        overrideAccess: false,
+        req,
+      })
+    }
+
+    // 9. afterPurge hook
+    if (pluginOptions.afterPurge) {
+      await pluginOptions.afterPurge({
+        collectionSlug,
+        deletedCount: unusedIds.length,
+        req,
+        unusedIds,
       })
     }
 
@@ -96,7 +175,8 @@ export default async function purgeHandler(
       message: `Purged ${unusedIds.length} unused document(s) from "${collectionSlug}". Refresh to see the cleaned list.`,
       unusedIds,
     })
-  } catch {
+  } catch (err) {
+    payload.logger.error({ err }, '[payload-purge] Purge failed')
     return Response.json(
       { error: `Failed to purge collection "${collectionSlug}"` },
       { status: 500 },

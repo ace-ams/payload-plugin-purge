@@ -1,11 +1,32 @@
-import type { CollectionSlug, Config } from 'payload'
+import type { CollectionSlug, Config, PayloadRequest } from 'payload'
 
 import purgeHandler from './endpoints/purge.js'
 
 export type PayloadPurgeConfig = {
   /**
-   * A map of collection slugs to enable the purge feature on.
-   * Set a collection's value to `true` to enable, or `false` / omit to skip.
+   * Optional access control function. Called with the current request after
+   * authentication. Return `false` to deny the purge with a 403 response.
+   * Defaults to allowing any authenticated user.
+   */
+  access?: (req: PayloadRequest) => boolean | Promise<boolean>
+  /**
+   * Hook called after all unused documents have been deleted.
+   * Receives the collection slug, the number of deleted docs, the request,
+   * and the list of deleted IDs.
+   */
+  afterPurge?: (args: {
+    collectionSlug: string
+    deletedCount: number
+    req: PayloadRequest
+    unusedIds: (number | string)[]
+  }) => Promise<void> | void
+  /**
+   * Hook called before any documents are deleted.
+   * Receives the target collection slug and the current request.
+   */
+  beforePurge?: (args: { collectionSlug: string; req: PayloadRequest }) => Promise<void> | void
+  /**
+   * A list of collection slugs to enable the purge feature on.
    *
    * @example ['media', 'assets']
    */
@@ -45,7 +66,7 @@ export const payloadPurge =
       }
 
       collection.endpoints.push({
-        handler: (req) => purgeHandler(req, collectionSlug),
+        handler: (req) => purgeHandler(req, collectionSlug, pluginOptions),
         method: 'post',
         path: '/purge',
       })
@@ -64,6 +85,16 @@ export const payloadPurge =
       }
 
       collection.admin.components.listMenuItems.push(`@ace-ams/payload-purge/client#PurgeButton`)
+    }
+
+    const previousOnInit = config.onInit
+    config.onInit = async (payload) => {
+      if (previousOnInit) {
+        await previousOnInit(payload)
+      }
+      payload.logger.info(
+        `[payload-purge] Initialized. Purge enabled on collection(s): ${collections.join(', ') || '(none)'}`,
+      )
     }
 
     return config
