@@ -59,9 +59,7 @@ const buildConfigWithMemoryDB = async () => {
     },
     plugins: [
       payloadPurge({
-        collections: {
-          posts: true,
-        },
+        collections: ['media'],
       }),
     ],
     secret: process.env.PAYLOAD_SECRET || 'test-secret_key',

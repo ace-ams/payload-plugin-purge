@@ -1,112 +1,69 @@
 import type { CollectionSlug, Config } from 'payload'
 
-import { customEndpointHandler } from './endpoints/customEndpointHandler.js'
+import purgeHandler from './endpoints/purge.js'
 
 export type PayloadPurgeConfig = {
   /**
-   * List of collections to add a custom field
+   * A map of collection slugs to enable the purge feature on.
+   * Set a collection's value to `true` to enable, or `false` / omit to skip.
+   *
+   * @example ['media', 'assets']
    */
-  collections?: Partial<Record<CollectionSlug, true>>
+  collections?: Partial<CollectionSlug[]>
+  /**
+   * Disable the plugin entirely without removing it from the config.
+   */
   disabled?: boolean
 }
 
 export const payloadPurge =
   (pluginOptions: PayloadPurgeConfig) =>
   (config: Config): Config => {
-    if (!config.collections) {
-      config.collections = []
-    }
-
-    config.collections.push({
-      slug: 'plugin-collection',
-      fields: [
-        {
-          name: 'id',
-          type: 'text',
-        },
-      ],
-    })
-
-    if (pluginOptions.collections) {
-      for (const collectionSlug in pluginOptions.collections) {
-        const collection = config.collections.find(
-          (collection) => collection.slug === collectionSlug,
-        )
-
-        if (collection) {
-          collection.fields.push({
-            name: 'addedByPlugin',
-            type: 'text',
-            admin: {
-              position: 'sidebar',
-            },
-          })
-        }
-      }
-    }
-
-    /**
-     * If the plugin is disabled, we still want to keep added collections/fields so the database schema is consistent which is important for migrations.
-     * If your plugin heavily modifies the database schema, you may want to remove this property.
-     */
     if (pluginOptions.disabled) {
       return config
     }
 
-    if (!config.endpoints) {
-      config.endpoints = []
+    if (!config.collections) {
+      config.collections = []
     }
 
-    if (!config.admin) {
-      config.admin = {}
-    }
+    const collections = pluginOptions.collections?.filter((e) => e !== undefined) ?? []
 
-    if (!config.admin.components) {
-      config.admin.components = {}
-    }
+    for (const collectionSlug of collections) {
+      const collection = config.collections.find((col) => col.slug === collectionSlug)
 
-    if (!config.admin.components.beforeDashboard) {
-      config.admin.components.beforeDashboard = []
-    }
-
-    config.admin.components.beforeDashboard.push(
-      `payload-purge/client#BeforeDashboardClient`,
-    )
-    config.admin.components.beforeDashboard.push(
-      `payload-purge/rsc#BeforeDashboardServer`,
-    )
-
-    config.endpoints.push({
-      handler: customEndpointHandler,
-      method: 'get',
-      path: '/my-plugin-endpoint',
-    })
-
-    const incomingOnInit = config.onInit
-
-    config.onInit = async (payload) => {
-      // Ensure we are executing any existing onInit functions before running our own.
-      if (incomingOnInit) {
-        await incomingOnInit(payload)
+      if (!collection) {
+        throw new Error(
+          `[payload-purge] Collection "${collectionSlug}" not found in config. ` +
+            `Make sure the slug is correct and that the collection is registered before the plugin.`,
+        )
       }
 
-      const { totalDocs } = await payload.count({
-        collection: 'plugin-collection',
-        where: {
-          id: {
-            equals: 'seeded-by-plugin',
-          },
-        },
+      // Register the purge endpoint on the collection, passing the slug via closure
+      if (!collection.endpoints) {
+        collection.endpoints = []
+      }
+
+      collection.endpoints.push({
+        handler: (req) => purgeHandler(req, collectionSlug),
+        method: 'post',
+        path: '/purge',
       })
 
-      if (totalDocs === 0) {
-        await payload.create({
-          collection: 'plugin-collection',
-          data: {
-            id: 'seeded-by-plugin',
-          },
-        })
+      // Add the purge button to the collection list view toolbar
+      if (!collection.admin) {
+        collection.admin = {}
       }
+
+      if (!collection.admin.components) {
+        collection.admin.components = {}
+      }
+
+      if (!collection.admin.components.listMenuItems) {
+        collection.admin.components.listMenuItems = []
+      }
+
+      collection.admin.components.listMenuItems.push(`payload-purge/client#PurgeButton`)
     }
 
     return config
