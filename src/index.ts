@@ -63,7 +63,7 @@ export const payloadPurge =
         collection.admin.components.listMenuItems = []
       }
 
-      collection.admin.components.listMenuItems.push(`payload-purge/client#PurgeButton`)
+      collection.admin.components.listMenuItems.push(`@ace-ams/payload-purge/client#PurgeButton`)
     }
 
     return config
