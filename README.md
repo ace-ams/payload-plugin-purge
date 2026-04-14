@@ -5,7 +5,7 @@ A [Payload CMS](https://payloadcms.com) plugin that adds a **Purge Unused** butt
 ## Installation
 
 ```sh
-pnpm add @ace-ams/payload-purge
+npm i @ace-ams/payload-purge
 ```
 
 ## Setup
@@ -97,8 +97,8 @@ payloadPurge({
 
 ## Development
 
-1. Clone the repository and run `pnpm install` to install dependencies.
-2. Run `pnpm dev` to start the local Payload dev environment at `http://localhost:3000`.
+1. Clone the repository and run `npm install` to install dependencies.
+2. Run `npm dev` to start the local Payload dev environment at `http://localhost:3000`.
 3. Make changes inside `src/` — the dev project in `dev/` picks them up automatically.
-4. Run `pnpm test:int` to run integration tests and `pnpm test:e2e` for end-to-end tests.
-5. Run `pnpm build` to compile the plugin to `dist/` before publishing.
+4. Run `npm test:int` to run integration tests and `npm test:e2e` for end-to-end tests.
+5. Run `npm build` to compile the plugin to `dist/` before publishing.
