@@ -4,6 +4,14 @@
   "description": "Purge unused documents from your Payload CMS collections",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ace-ams/payload-plugin-purge"
+  },
+  "bugs": {
+    "url": "https://github.com/ace-ams/payload-plugin-purge/issues"
+  },
+  "homepage": "https://github.com/ace-ams/payload-plugin-purge#readme",
   "exports": {
     ".": {
       "import": "./dist/index.js",
